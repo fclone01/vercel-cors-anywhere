@@ -1,9 +1,6 @@
 import { NowRequest, NowResponse } from "@vercel/node";
 import got from "got";
 import { CookieJar } from "tough-cookie";
-import Redis from "ioredis";
-
-const redis = new Redis(process.env.REDIS_URL); // Redis cache
 
 export default async function (req: NowRequest, res: NowResponse) {
     const { url = null } = req.query;
@@ -14,28 +11,17 @@ export default async function (req: NowRequest, res: NowResponse) {
     }
 
     try {
-        // Kiểm tra cache Redis (lưu dưới dạng Buffer để hỗ trợ mọi loại nội dung)
-        const cachedData = await redis.getBuffer(url);
-        if (cachedData) {
-            console.log("Cache hit");
-            const metadata = await redis.hgetall(`${url}:meta`);
-            setHeaders(res, metadata);
-            res.end(cachedData);
-            return;
-        }
-
-        console.log("Cache miss, fetching...");
+        console.log("Fetching:", url);
         const cookieJar = new CookieJar();
         const response = await got(url, {
             cookieJar,
-            responseType: "buffer", // Hỗ trợ tất cả loại dữ liệu
+            responseType: "buffer", // Hỗ trợ mọi loại nội dung
         });
 
-        // Lưu cache dữ liệu
-        await redis.set(url, response.body, "EX", 60 * 60 * 24 * 365 * 100); // Cache 100 năm
-        await redis.hmset(`${url}:meta`, response.headers); // Cache headers
+        // Thiết lập cache HTTP 1 năm
+        res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
 
-        // Trả về dữ liệu từ URL gốc, giữ nguyên headers
+        // Giữ nguyên headers từ response gốc
         setHeaders(res, response.headers);
         res.end(response.body);
     } catch (error) {
@@ -43,7 +29,7 @@ export default async function (req: NowRequest, res: NowResponse) {
     }
 }
 
-// Hàm thiết lập headers giữ nguyên từ URL gốc
+// Hàm sao chép headers từ response gốc
 function setHeaders(res: NowResponse, headers: Record<string, string | string[]>) {
     for (const [key, value] of Object.entries(headers)) {
         if (key.toLowerCase() !== "transfer-encoding") {
